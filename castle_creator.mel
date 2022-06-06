@@ -1,0 +1,283 @@
+// declare shared variable
+int $baseH = rand(7, 15);
+int $baseR = rand(2, 6);
+float $radiusDiff = 0.5;
+
+string $castles[] = createCastle($baseH, $baseR, $radiusDiff, 50);
+
+proc string[] createCastle(int $baseH, int $baseR, float $radiusDiff, int $flatPercent)
+{
+	/* 
+    Creates castle towers and wall with selected curves 
+    Args:
+		$baseH (int): base tower height
+        $baseR (int): base tower radius
+        $radiusDiff (float): difference of radius of next tower section
+		$flatPercent (int): percentage of FLAT tower to create
+    Return: 
+        str[]: towers' names and wall's name
+    */
+	// Check user input right number of percentage
+    if ($flatPercent<0 || $flatPercent>100){error "flatPercent must between 1 and 100!";}
+	
+	//select curves
+    string $castles[];
+    string $curves[] = `ls -sl`;
+		
+    if (size($curves)){
+            
+        // Creates towers section
+        for ($crv in $curves){
+            vector $positions[] = `getCVsPositions($crv)`;
+            
+            for ($pos in $positions){
+                // Decides how many flat and peaked towers
+                int $seed = rand(1,100);
+                if ($flatPercent >= $seed){
+                    string $flatCastle = createFlatTower($baseH, $baseR, $radiusDiff, $pos);
+                    appendStringArray($castles,{$flatCastle},1);
+                }else{
+                    string $peakCastle = createPeakTower($baseH, $baseR, $radiusDiff, $pos);
+                    appendStringArray($castles,{$peakCastle},1);
+                } 
+            }
+			// If start tower overlay with end tower, delete the first
+            if (mag($positions[0] - $positions[(size($positions)-1)])<($baseR/2)){
+                select $castles[0];
+                delete;
+            } 
+        }        
+        // Creates walls section
+        for ($path in $curves){
+            string $wall = createWall($path, ($baseH-1),  $radiusDiff, 0.75, $radiusDiff);
+            appendStringArray($castles,{$wall},1);
+        }
+        
+    }else{
+        error "Select a path curve!";
+    }  
+    return $castles;
+}
+
+proc int countCV(string $curve)
+{
+	/* 
+    Counts how many CV points in a curve 
+    Args:
+		$curve (str): curve's name
+    Return: 
+        int: CV number of a curve
+    */
+    int $cvNum = (`getAttr ($curve+".degree")`+`getAttr ($curve+".spans")`);
+    return $cvNum;
+}
+
+proc vector[] getCVsPositions(string $curve)
+{
+	/* 
+    Gets a list of CV positions 
+    Args:
+		$curve (str): curve's name
+    Return: 
+        vector[]: a list of positions of CV points
+    */
+    vector $cvPositions[];
+    clear $cvPositions;
+    int $cvNum = countCV($curve);
+    for ($i=0; $i<$cvNum; $i++){
+        $cvPositions[$i] = `getAttr ($curve+".cv["+$i+"]")`;
+    }
+    return $cvPositions;
+}
+
+
+proc string createBaseTower(int $height,int $radius)
+{
+    /* 
+    Creates a base tower 
+    Args:
+        $baseH (int): base tower height
+        $baseR (int): base tower radius
+    Return: 
+        str: base tower name
+    */
+    // Creates a base tower
+    string $base[];
+    $base = `polyCylinder -n "baseTower" -h $height -r $radius -ch 0`;
+    
+    return $base[0];
+}
+
+proc string createPeakTower(int $baseH, int$baseR, float $radiusDiff, vector $pos)
+{
+    /* 
+    Creates a peaked tower 
+    Args:
+        $baseH (int): base tower height
+        $baseR (int): base tower radius
+        $radius (float): difference of radius of next tower section
+    Return: 
+        str: tower name
+    */
+    
+    // Create a base tower
+    string $base[];
+    $base[0] = createBaseTower($baseH, $baseR);
+    
+    // Create the second part of a tower
+    int $secondPartH = 6;
+    string $secondPart[];
+    $secondPart = `polyCylinder -h $secondPartH -r ($baseR+$radiusDiff) -ch 0`;
+    move -a 0 (($baseH+$secondPartH)*0.5) 0 $secondPart[0];
+    
+    // Create a peaked roof
+    int $roofH = rand(3,10);
+    string $roof[];
+    $roof = `polyCone -h $roofH -r ($baseR+$radiusDiff*2)-ch 0`;
+    move -a 0 (($baseH + $roofH)*0.5 + $secondPartH) 0 $roof[0];
+    
+    // Combines sections to one tower named "tower1"
+    string $peakTower[];
+    $peakTower = `polyUnite -ch 1 -n "tower1" $base[0] $secondPart[0] $roof[0]`;
+    DeleteHistory;
+    select -cl;
+    
+    // Moves the tower to the input position, then moves up to ground level
+    move -a ($pos.x) ($pos.y) ($pos.z) $peakTower[0];
+    move -r 0 ($baseH*0.5) 0 $peakTower[0];
+    return $peakTower[0];
+}
+
+
+proc string createFlatTower(int $baseH, int$baseR, float $radiusDiff, vector $pos)
+{
+    /* 
+    Creates a flat tower 
+    Args:
+        $baseH (int): base tower height
+        $baseR (int): base tower radius
+        $radius (float): difference of radius of next tower section
+    Return: 
+        str: tower name
+    */
+    
+    // Create a base tower
+    string $base[];
+    $base[0] = createBaseTower($baseH, $baseR);
+    
+    // Create the second part of a tower
+    string $secondPart[];
+    int $secondPartH = 2;
+    int $seg = 40;
+
+    $secondPart = `polyPipe -sa $seg -h ($secondPartH*2) -r ($baseR+$radiusDiff) -ch 0`;
+    move -a 0 (($baseH+$secondPartH)*0.5) 0 $secondPart[0]; 
+    
+    // Extrudes Fortified Wall
+    float $fortifiWallH = 0.75;
+    $secondPart[0] = extrudeFortifiedWall($secondPart[0], $seg, $fortifiWallH);
+    
+    // Combines sections to one tower named "tower1"
+    string $flatTower[];
+    $flatTower = `polyUnite -ch 1 -n "tower1" $base[0] $secondPart[0]`;
+    DeleteHistory;
+    select -cl;
+    
+    // Moves the tower to the input position, then moves up to ground level
+    move -a ($pos.x) ($pos.y) ($pos.z) $flatTower[0];
+    move -r 0 ($baseH*0.5) 0 $flatTower[0];
+    
+    return $flatTower[0];
+}
+
+proc string createNurbRectangle(float $length, float $width){
+    /* 
+    Draw a rectangle nurbs curve
+    Args:
+        $length (float): length of rectangle
+        $width (float): width of rectangle
+    Return: 
+        str: tectangle's name
+    */
+    float $x = ($width*0.5);
+    float $y = $length;
+    string $nurb = `curve -n "rectangleCrv" -d 1 -p $x 0 0 -p $x $y 0 -p (-$x) $y 0 -p (-$x) 0 0 -p $x 0 0 -k 0 -k 1 -k 2 -k 3 -k 4`;
+    return $nurb;
+}
+
+proc string createWall(string $path, float $height, float $width, float $fortifiWallH, float $fortifiWallDis){
+    /* 
+    Creates a fortified wall
+    Args:
+        $path (str): length of rectangle
+        $height (float): width of rectangle
+		$fortifiWallH (float): fortified wall height
+		$fortifiWallDis (float): distance of each fortified walls
+    Return: 
+        str: wall's name
+    */    
+    //Rebuilds the path curve with segment number
+    int $seg = getSegNum($path, $fortifiWallDis);
+    string $rbPath[] = `rebuildCurve -ch 0 -rpo 0 -rt 0 -end 1 -kr 0 -kcp 0 -kep 1 -kt 0 -s $seg -d 1 -tol 10 -n "rbPath" $path`;
+    
+    //Extrudes the height, then extrudes the width of both sides
+    string $nurbWall[] = `extrude -n "nurbWall" -ch 0 -rn false -po 0 -et 0 -upn 0 -d 0 1 0 -length $height -rotation 0 -scale 1 -dl 3  $rbPath[0]`;
+    string $wall[] = `nurbsToPoly -n "wall" -mnd 1  -ch 0 -f 3 -pt 0 -pc 200 -chr 0.9 -ft 0.01 -mel 0.001 -d 0.1 -ut 1 -un 3 -vt 1 -vn 3 -uch 0 -ucr 0 -cht 0.2 -es 0 -ntr 0 -mrt 0 -uss 1 $nurbWall[0]`;
+    polyExtrudeFacet -tk ($width/2) -ch 0 ($wall[0]+".f[0:"+$seg+"]");
+    polyExtrudeFacet -tk ($width/2) -ch 0 ($wall[0]+".f["+$seg+":"+($seg*2-1)+"]");
+    
+    // delete coneter edge of the wall
+    polyDelEdge -cv true -ch 0 ($wall[0]+".e[0:"+($seg*2+1)+"]");
+    
+    //Extrudes fortified Wall
+    select -cl;
+    for ($f=($seg*2+6); $f<($seg*4); $f+=4)
+    {
+        select -add ($wall[0]+".f["+$f+"]");
+    }
+    select -add ($wall[0]+".f["+($seg*2+1)+"]");
+    
+    $wall[0] = `polyExtrudeFacet -tk $fortifiWallH -ch 0 -n "wall"`;
+    
+    // Deletes source curves and nurbs wall
+    select $nurbWall[0];
+    select -add $rbPath[0];
+    delete;
+    
+    return $wall[0];
+}
+
+proc int getSegNum(string $curve, float $segLen){
+    /* 
+    Counts segment of a curve
+    Args:
+        $curve (str): name of the curve
+        $segLen (float): distance of each point
+    Return: 
+        int: segment number
+    */    
+	// Total length divided by segment distance
+    float $totalLen = `arclen $curve`;
+    int $segNum = ($totalLen/$segLen);
+    return $segNum;
+}
+
+proc string extrudeFortifiedWall(string $wall, int $seg, float $height){
+    /* 
+    Extrudes Fortified walls (only for towers!)
+    Args:
+        $wall (str): name of the wall
+        $seg (float): segment of tower (cylinder segment)
+		$height (float): height of fortified wall
+    Return: 
+        str: name of the fortified wall
+    */  
+    select -cl;      
+    for ($f=($seg+1); $f<($seg*2); $f+=2)
+    {
+        select -add ($wall+".f["+$f+"]");
+    }
+    polyExtrudeFacet -tk $height -ch 0;
+    select -cl;
+    return $wall;    
+}
